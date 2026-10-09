@@ -1,0 +1,1282 @@
+[
+    {
+        "id": "d5f84fe3c1ba01d0",
+        "type": "tab",
+        "label": "ECG Health Monitor",
+        "disabled": false,
+        "info": "Arduino UNO R4 WiFi -> MQTT (broker.emqx.io) -> Dashboard 2.0\nSession : badge RFID -> bouton (start) -> ECG -> bouton (stop)"
+    },
+    {
+        "id": "e7cb41eb5f4712f4",
+        "type": "mqtt in",
+        "z": "d5f84fe3c1ba01d0",
+        "name": "ECG samples",
+        "topic": "health/ecg",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "f7d09da4ba95a012",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 110,
+        "y": 100,
+        "wires": [
+            [
+                "ac4e5421fba021d5"
+            ]
+        ]
+    },
+    {
+        "id": "ac4e5421fba021d5",
+        "type": "function",
+        "z": "d5f84fe3c1ba01d0",
+        "name": "ECG processing + BPM estimate",
+        "func": "let d = msg.payload;\nif (typeof d === 'string') {\n    try { d = JSON.parse(d); } catch (e) { return null; }\n}\nif (!d || !Number.isFinite(Number(d.raw))) return null;\n\nconst raw = Number(d.raw);\nconst now = Date.now();\n// État en contexte FLOW pour pouvoir être réinitialisé au start/stop.\nlet s = flow.get('ecgState') || { base: raw, prev: raw, armed: true, lastPeak: 0, leads: null };\n\n// Suivi lent de la ligne de base pour estimer la composante AC.\ns.base = s.base * 0.98 + raw * 0.02;\nconst ac = raw - s.base;\nconst prevAc = s.prev - s.base;\nconst threshold = 18; // À calibrer selon votre capteur ECG.\n\n// Estimation BPM sur front montant (pas un algorithme médical).\nlet bpmMsg = null;\nif (prevAc < threshold && ac >= threshold && s.armed) {\n    if (s.lastPeak > 0) {\n        const interval = now - s.lastPeak;\n        if (interval >= 300 && interval <= 2000) {\n            bpmMsg = { payload: Math.round(60000 / interval), topic: 'BPM' };\n        }\n    }\n    s.lastPeak = now;\n    s.armed = false;\n}\nif (ac < threshold * 0.4) s.armed = true;\ns.prev = raw;\n\n// Message électrodes uniquement quand l'état change.\nconst leadsOk = Number(d.lo_plus) === 0 && Number(d.lo_moins) === 0;\nlet leadMsg = null;\nif (s.leads !== leadsOk) {\n    s.leads = leadsOk;\n    leadMsg = { payload: leadsOk ? '🟢 Contact détecté' : '🔴 Vérifier les électrodes', topic: 'Electrode status' };\n}\nflow.set('ecgState', s);\n\nreturn [{ payload: raw, topic: 'ECG' }, bpmMsg, leadMsg, { payload: 'ecg', topic: 'heartbeat' }];",
+        "outputs": 4,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 400,
+        "y": 100,
+        "wires": [
+            [
+                "492f52f886027396"
+            ],
+            [
+                "d5f9a68d9afc50b5",
+                "f498977d7242b7f7"
+            ],
+            [
+                "2fcf42bdc7c22669"
+            ],
+            [
+                "73302fd87fb2ad63"
+            ]
+        ]
+    },
+    {
+        "id": "492f52f886027396",
+        "type": "ui-chart",
+        "z": "d5f84fe3c1ba01d0",
+        "group": "grp_ecg",
+        "name": "ECG waveform",
+        "label": " ECG en direct",
+        "order": 1,
+        "chartType": "line",
+        "category": "topic",
+        "categoryType": "msg",
+        "xAxisLabel": "",
+        "xAxisProperty": "",
+        "xAxisPropertyType": "timestamp",
+        "xAxisType": "time",
+        "xAxisFormat": "",
+        "xmin": "",
+        "xmax": "",
+        "yAxisLabel": "ADC",
+        "yAxisProperty": "payload",
+        "yAxisPropertyType": "msg",
+        "ymin": "0",
+        "ymax": "1023",
+        "action": "append",
+        "stackSeries": false,
+        "pointShape": "false",
+        "pointRadius": 0,
+        "showLegend": false,
+        "removeOlder": "10",
+        "removeOlderUnit": "1",
+        "removeOlderPoints": "500",
+        "colors": [
+            "#0ea5e9",
+            "#6366f1",
+            "#10b981"
+        ],
+        "textColor": [
+            "#334155"
+        ],
+        "textColorDefault": false,
+        "gridColor": [
+            "#e2e8f0"
+        ],
+        "gridColorDefault": false,
+        "width": 8,
+        "height": 4,
+        "className": "",
+        "interpolation": "linear",
+        "x": 1260,
+        "y": 60,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "d5f9a68d9afc50b5",
+        "type": "ui-gauge",
+        "z": "d5f84fe3c1ba01d0",
+        "name": "Estimated BPM",
+        "group": "grp_vitals",
+        "order": 1,
+        "width": 6,
+        "height": 3,
+        "gtype": "gauge-half",
+        "gstyle": "rounded",
+        "title": "❤️ BPM estimé",
+        "units": "bpm",
+        "icon": "",
+        "prefix": "",
+        "suffix": "",
+        "segments": [
+            {
+                "from": "0",
+                "color": "#22c55e"
+            },
+            {
+                "from": "60",
+                "color": "#f59e0b"
+            },
+            {
+                "from": "100",
+                "color": "#ef4444"
+            }
+        ],
+        "min": 0,
+        "max": 200,
+        "sizeThickness": 16,
+        "sizeGap": 4,
+        "sizeKeyThickness": 8,
+        "styleRounded": true,
+        "styleGlow": false,
+        "className": "",
+        "x": 1260,
+        "y": 120,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "2fcf42bdc7c22669",
+        "type": "ui-text",
+        "z": "d5f84fe3c1ba01d0",
+        "group": "grp_events",
+        "order": 3,
+        "width": 6,
+        "height": 1,
+        "name": "Electrode status",
+        "label": " Électrodes",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "",
+        "wrapText": true,
+        "className": "",
+        "x": 1260,
+        "y": 180,
+        "wires": []
+    },
+    {
+        "id": "50256a7317c0e28e",
+        "type": "inject",
+        "z": "d5f84fe3c1ba01d0",
+        "name": "Initial electrode state",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "0.5",
+        "topic": "",
+        "payload": "⏸️ Acquisition arrêtée",
+        "payloadType": "str",
+        "x": 140,
+        "y": 180,
+        "wires": [
+            [
+                "2fcf42bdc7c22669"
+            ]
+        ]
+    },
+    {
+        "id": "eb109704ef99034d",
+        "type": "mqtt in",
+        "z": "d5f84fe3c1ba01d0",
+        "name": "Patient RFID UID",
+        "topic": "health/rfid",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "f7d09da4ba95a012",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 130,
+        "y": 340,
+        "wires": [
+            [
+                "69a43de026997583"
+            ]
+        ]
+    },
+    {
+        "id": "69a43de026997583",
+        "type": "function",
+        "z": "d5f84fe3c1ba01d0",
+        "name": "RFID duplicate filter",
+        "func": "const uid = String(msg.payload || '').trim();\nif (!uid) return null;\nconst now = Date.now();\nconst previousUID = context.get('lastUID') || '';\nconst previousTime = context.get('lastTime') || 0;\n\n// Ignore le même badge relu en moins de 3 s.\nif (uid === previousUID && now - previousTime < 3000) return null;\n\ncontext.set('lastUID', uid);\ncontext.set('lastTime', now);\nflow.set('patientUID', uid);\nmsg.payload = '🪪 ' + uid;\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 590,
+        "y": 340,
+        "wires": [
+            [
+                "b0a748e8c168fb89"
+            ]
+        ]
+    },
+    {
+        "id": "b0a748e8c168fb89",
+        "type": "ui-text",
+        "z": "d5f84fe3c1ba01d0",
+        "group": "grp_events",
+        "order": 2,
+        "width": 6,
+        "height": 1,
+        "name": "Patient badge",
+        "label": "Patient (badge RFID)",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "",
+        "wrapText": true,
+        "className": "",
+        "x": 1260,
+        "y": 300,
+        "wires": []
+    },
+    {
+        "id": "809fa59446fd78c5",
+        "type": "inject",
+        "z": "d5f84fe3c1ba01d0",
+        "name": "Initial badge",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "0.5",
+        "topic": "",
+        "payload": "— aucun badge —",
+        "payloadType": "str",
+        "x": 130,
+        "y": 280,
+        "wires": [
+            [
+                "b0a748e8c168fb89"
+            ]
+        ]
+    },
+    {
+        "id": "ec41f5ad5216989a",
+        "type": "mqtt in",
+        "z": "d5f84fe3c1ba01d0",
+        "name": "Button event",
+        "topic": "health/button",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "f7d09da4ba95a012",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 130,
+        "y": 500,
+        "wires": [
+            [
+                "2632ae381f3d4450"
+            ]
+        ]
+    },
+    {
+        "id": "7cd4e5eb442a0c07",
+        "type": "inject",
+        "z": "d5f84fe3c1ba01d0",
+        "name": "Initial button state",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "0.5",
+        "topic": "",
+        "payload": "⏳ En attente d’un appui…",
+        "payloadType": "str",
+        "x": 170,
+        "y": 440,
+        "wires": [
+            [
+                "08f8436994058b50"
+            ]
+        ]
+    },
+    {
+        "id": "2632ae381f3d4450",
+        "type": "function",
+        "z": "d5f84fe3c1ba01d0",
+        "name": "Button event (start/stop/refused)",
+        "func": "// Événements envoyés par l'Arduino : start / stop / refused\nconst p = String(msg.payload ?? '').trim().toLowerCase();\nif (!p) return null;\nconst t = new Date().toLocaleTimeString('fr-FR', { timeZone: 'Europe/Paris' });\nconst labels = {\n    start:   '▶️ Acquisition démarrée à ',\n    stop:    '⏹️ Acquisition arrêtée à ',\n    refused: '⛔ Badge requis — appui ignoré à ',\n    pressed: '🔘 Appuyé à '\n};\nconst txt = { payload: (labels[p] || '🔘 ' + p + ' — ') + t };\n\n// Sorties : 1 texte bouton, 2 commande MQTT, 3 alarme, 4 actionneurs,\n//           5 jauge BPM, 6 électrodes, 7 graphique ECG\nif (p === 'start') {\n    flow.set('ecgState', null);\n    return [txt, null, null, null, null,\n            { payload: '⏳ Attente du signal…' },\n            { payload: [] }];              // efface le graphique\n}\n\nif (p === 'stop') {\n    // Fin de session : on remet l'alarme et les actionneurs à zéro.\n    flow.set('ecgState', null);\n    flow.set('alarmActive', false);\n    flow.set('manualLampOverride', null);\n    flow.set('manualBuzzerOverride', null);\n    flow.set('lampState', 0);\n    flow.set('buzzerState', 0);\n    flow.set('freq', 600);\n    return [txt,\n            { payload: 'lamp=0;buzzer=0;frequency=600' },\n            { payload: '✅ Alarme inactive' },\n            { payload: '💡 Lampe OFF · 🔇 Buzzer OFF' },\n            { payload: 0 },\n            { payload: '⏸️ Acquisition arrêtée' },\n            null];\n}\n\nreturn [txt, null, null, null, null, null, null];",
+        "outputs": 7,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 630,
+        "y": 500,
+        "wires": [
+            [
+                "08f8436994058b50"
+            ],
+            [
+                "4469657a9d4f63c6"
+            ],
+            [
+                "71bf7a9874430d0d"
+            ],
+            [
+                "938a4f5c920eebb1"
+            ],
+            [
+                "d5f9a68d9afc50b5"
+            ],
+            [
+                "2fcf42bdc7c22669"
+            ],
+            [
+                "492f52f886027396"
+            ]
+        ]
+    },
+    {
+        "id": "08f8436994058b50",
+        "type": "ui-text",
+        "z": "d5f84fe3c1ba01d0",
+        "group": "grp_events",
+        "order": 4,
+        "width": 6,
+        "height": 1,
+        "name": "Button event",
+        "label": " Bouton physique",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "",
+        "wrapText": true,
+        "className": "",
+        "x": 1070,
+        "y": 400,
+        "wires": []
+    },
+    {
+        "id": "89999fbbd034e4cf",
+        "type": "mqtt in",
+        "z": "d5f84fe3c1ba01d0",
+        "name": "Arduino status",
+        "topic": "health/status",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "f7d09da4ba95a012",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 140,
+        "y": 700,
+        "wires": [
+            [
+                "73302fd87fb2ad63"
+            ]
+        ]
+    },
+    {
+        "id": "e01e9c1a478e03a3",
+        "type": "inject",
+        "z": "d5f84fe3c1ba01d0",
+        "name": "Watchdog 2 s",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "2",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "0.5",
+        "topic": "tick",
+        "payload": "",
+        "payloadType": "date",
+        "x": 150,
+        "y": 760,
+        "wires": [
+            [
+                "73302fd87fb2ad63"
+            ]
+        ]
+    },
+    {
+        "id": "73302fd87fb2ad63",
+        "type": "function",
+        "z": "d5f84fe3c1ba01d0",
+        "name": "Arduino connection + session",
+        "func": "// En ligne = message de statut (heartbeat Arduino toutes les 2 s)\n//            OU échantillons ECG reçus pendant les 5 dernières secondes.\nconst now = Date.now();\nconst UNKNOWN = '⚪ Session inconnue';\nlet sessionTxt = null;\n\nif (msg.topic === 'health/status') {\n    const p = String(msg.payload ?? '').trim();\n    const off = /deconnect|offline|disconnected/i.test(p);\n    context.set('lastSeen', off ? 0 : now);\n    const labels = {\n        'attente badge':        '🪪 En attente d’un badge',\n        'patient identifie':    '✅ Patient identifié — appuyez sur le bouton',\n        'acquisition en cours': '▶️ Acquisition en cours'\n    };\n    sessionTxt = off ? UNKNOWN : (labels[p.toLowerCase()] || p);\n} else if (msg.topic === 'heartbeat') {\n    context.set('lastSeen', now);\n}\n\nconst isOn = now - (context.get('lastSeen') || 0) < 5000;\nif (!isOn) sessionTxt = UNKNOWN;\n\nlet statusMsg = null;\nif (context.get('online') !== isOn) {\n    context.set('online', isOn);\n    statusMsg = { payload: isOn ? '🟢 Arduino connecté' : '🔴 Arduino déconnecté' };\n}\n\nlet sessionMsg = null;\nif (sessionTxt !== null && context.get('session') !== sessionTxt) {\n    context.set('session', sessionTxt);\n    sessionMsg = { payload: sessionTxt };\n}\n\nif (!statusMsg && !sessionMsg) return null;\nreturn [statusMsg, sessionMsg];",
+        "outputs": 2,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 420,
+        "y": 740,
+        "wires": [
+            [
+                "4a614387e50e8584"
+            ],
+            [
+                "c506f3b25e867e1f"
+            ]
+        ]
+    },
+    {
+        "id": "4a614387e50e8584",
+        "type": "ui-text",
+        "z": "d5f84fe3c1ba01d0",
+        "group": "grp_events",
+        "order": 5,
+        "width": 6,
+        "height": 1,
+        "name": "Arduino status",
+        "label": " État Arduino",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "",
+        "wrapText": true,
+        "className": "",
+        "x": 1300,
+        "y": 720,
+        "wires": []
+    },
+    {
+        "id": "c506f3b25e867e1f",
+        "type": "ui-text",
+        "z": "d5f84fe3c1ba01d0",
+        "group": "grp_events",
+        "order": 1,
+        "width": 6,
+        "height": 1,
+        "name": "Session state",
+        "label": " Session",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "",
+        "wrapText": true,
+        "className": "",
+        "x": 1300,
+        "y": 780,
+        "wires": []
+    },
+    {
+        "id": "2f27c6dcbb61b4ca",
+        "type": "inject",
+        "z": "d5f84fe3c1ba01d0",
+        "name": "Initial session",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "0.5",
+        "topic": "",
+        "payload": "⏳ En attente de l’Arduino…",
+        "payloadType": "str",
+        "x": 150,
+        "y": 820,
+        "wires": [
+            [
+                "c506f3b25e867e1f"
+            ]
+        ]
+    },
+    {
+        "id": "9f38584346ae9342",
+        "type": "ui-slider",
+        "z": "d5f84fe3c1ba01d0",
+        "group": "grp_controls",
+        "name": "BPM alarm threshold",
+        "label": " Seuil d’alerte BPM",
+        "tooltip": "Déclenche la lampe et le buzzer si le BPM estimé atteint ou dépasse ce seuil.",
+        "order": 1,
+        "width": 6,
+        "height": 1,
+        "passthru": true,
+        "outs": "end",
+        "topic": "threshold",
+        "topicType": "str",
+        "thumbLabel": true,
+        "showTicks": "hover",
+        "min": 40,
+        "max": 180,
+        "step": 5,
+        "className": "",
+        "iconPrepend": "",
+        "iconAppend": "",
+        "color": "",
+        "showTextField": false,
+        "x": 140,
+        "y": 980,
+        "wires": [
+            [
+                "2668abc1e492de16"
+            ]
+        ]
+    },
+    {
+        "id": "0b07ce3ae51e6393",
+        "type": "inject",
+        "z": "d5f84fe3c1ba01d0",
+        "name": "Default threshold 100",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "0.5",
+        "topic": "",
+        "payload": "100",
+        "payloadType": "num",
+        "x": 160,
+        "y": 880,
+        "wires": [
+            [
+                "9f38584346ae9342",
+                "2668abc1e492de16"
+            ]
+        ]
+    },
+    {
+        "id": "2668abc1e492de16",
+        "type": "function",
+        "z": "d5f84fe3c1ba01d0",
+        "name": "Save BPM threshold",
+        "func": "const value = Number(msg.payload);\nif (!Number.isFinite(value)) return null;\nconst threshold = Math.max(40, Math.min(180, Math.round(value)));\nflow.set('bpmThreshold', threshold);\nmsg.payload = '🎚️ ' + threshold + ' BPM';\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 420,
+        "y": 900,
+        "wires": [
+            [
+                "af4e7b87e9e0c81a"
+            ]
+        ]
+    },
+    {
+        "id": "af4e7b87e9e0c81a",
+        "type": "ui-text",
+        "z": "d5f84fe3c1ba01d0",
+        "group": "grp_controls",
+        "order": 2,
+        "width": 6,
+        "height": 1,
+        "name": "Threshold confirmation",
+        "label": " Seuil configuré",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "",
+        "wrapText": true,
+        "className": "",
+        "x": 1300,
+        "y": 880,
+        "wires": []
+    },
+    {
+        "id": "f498977d7242b7f7",
+        "type": "function",
+        "z": "d5f84fe3c1ba01d0",
+        "name": " BPM alarm — lamp + buzzer",
+        "func": "const bpm = Number(msg.payload);\nif (!Number.isFinite(bpm) || bpm <= 0) return null;\nconst threshold = Number(flow.get('bpmThreshold') || 100);\nconst active = bpm >= threshold;\n// Contexte FLOW : réinitialisé quand l'acquisition s'arrête.\nif (flow.get('alarmActive') === active) return null;\nflow.set('alarmActive', active);\n\nlet lamp = 0, buzzer = 0, freq = 600;\nif (active) {\n    lamp = flow.get('manualLampOverride') === false ? 0 : 1;\n    buzzer = flow.get('manualBuzzerOverride') === false ? 0 : 1;\n    freq = 1200;\n} else {\n    flow.set('manualLampOverride', null);\n    flow.set('manualBuzzerOverride', null);\n}\nflow.set('lampState', lamp);\nflow.set('buzzerState', buzzer);\nflow.set('freq', freq);\n\nconst acts = '💡 Lampe ' + (lamp ? 'ON' : 'OFF') + ' · 🔊 Buzzer ' + (buzzer ? 'ON' : 'OFF');\nconst txt = active\n    ? '🚨 ALERTE — ' + bpm + ' BPM ≥ ' + threshold\n    : '✅ Alarme inactive — ' + bpm + ' BPM < ' + threshold;\nreturn [\n    { payload: 'lamp=' + lamp + ';buzzer=' + buzzer + ';frequency=' + freq },\n    { payload: txt },\n    { payload: acts }\n];",
+        "outputs": 3,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1030,
+        "y": 500,
+        "wires": [
+            [
+                "4469657a9d4f63c6"
+            ],
+            [
+                "71bf7a9874430d0d"
+            ],
+            [
+                "938a4f5c920eebb1"
+            ]
+        ]
+    },
+    {
+        "id": "316a34da507965f9",
+        "type": "inject",
+        "z": "d5f84fe3c1ba01d0",
+        "name": "Initial alarm state",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "0.5",
+        "topic": "",
+        "payload": " Alarme inactive",
+        "payloadType": "str",
+        "x": 150,
+        "y": 240,
+        "wires": [
+            [
+                "71bf7a9874430d0d"
+            ]
+        ]
+    },
+    {
+        "id": "71bf7a9874430d0d",
+        "type": "ui-text",
+        "z": "d5f84fe3c1ba01d0",
+        "group": "grp_vitals",
+        "order": 2,
+        "width": 6,
+        "height": 1,
+        "name": "BPM alarm state",
+        "label": "🚨 Alarme",
+        "format": "{{msg.payload}}",
+        "layout": "col-center",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "",
+        "wrapText": true,
+        "className": "",
+        "x": 1260,
+        "y": 240,
+        "wires": []
+    },
+    {
+        "id": "07089837e9396d76",
+        "type": "ui-button",
+        "z": "d5f84fe3c1ba01d0",
+        "group": "grp_controls",
+        "name": "Lampe ON",
+        "label": "💡 Lampe ON",
+        "order": 3,
+        "width": 3,
+        "height": 1,
+        "emulateClick": false,
+        "tooltip": "Commande manuelle de la lampe.",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "iconPosition": "left",
+        "payload": "lamp_on",
+        "payloadType": "str",
+        "topic": "",
+        "topicType": "str",
+        "buttonColor": "#0f766e",
+        "textColor": "#ffffff",
+        "iconColor": "#ffffff",
+        "x": 140,
+        "y": 1060,
+        "wires": [
+            [
+                "60875c130bd0ba85"
+            ]
+        ]
+    },
+    {
+        "id": "781f073c5be5ee45",
+        "type": "ui-button",
+        "z": "d5f84fe3c1ba01d0",
+        "group": "grp_controls",
+        "name": "Lampe OFF",
+        "label": "🌙 Lampe OFF",
+        "order": 4,
+        "width": 3,
+        "height": 1,
+        "emulateClick": false,
+        "tooltip": "Commande manuelle de la lampe.",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "iconPosition": "left",
+        "payload": "lamp_off",
+        "payloadType": "str",
+        "topic": "",
+        "topicType": "str",
+        "buttonColor": "#475569",
+        "textColor": "#ffffff",
+        "iconColor": "#ffffff",
+        "x": 150,
+        "y": 1100,
+        "wires": [
+            [
+                "60875c130bd0ba85"
+            ]
+        ]
+    },
+    {
+        "id": "b3a531ed0d84c5a1",
+        "type": "ui-button",
+        "z": "d5f84fe3c1ba01d0",
+        "group": "grp_controls",
+        "name": "Buzzer ON",
+        "label": "🔊 Buzzer ON",
+        "order": 5,
+        "width": 3,
+        "height": 1,
+        "emulateClick": false,
+        "tooltip": "Commande manuelle du buzzer.",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "iconPosition": "left",
+        "payload": "buzzer_on",
+        "payloadType": "str",
+        "topic": "",
+        "topicType": "str",
+        "buttonColor": "#b45309",
+        "textColor": "#ffffff",
+        "iconColor": "#ffffff",
+        "x": 150,
+        "y": 1160,
+        "wires": [
+            [
+                "60875c130bd0ba85"
+            ]
+        ]
+    },
+    {
+        "id": "4a897fe44dc648b5",
+        "type": "ui-button",
+        "z": "d5f84fe3c1ba01d0",
+        "group": "grp_controls",
+        "name": "Buzzer OFF",
+        "label": "🔇 Buzzer OFF",
+        "order": 6,
+        "width": 3,
+        "height": 1,
+        "emulateClick": false,
+        "tooltip": "Commande manuelle du buzzer.",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "iconPosition": "left",
+        "payload": "buzzer_off",
+        "payloadType": "str",
+        "topic": "",
+        "topicType": "str",
+        "buttonColor": "#475569",
+        "textColor": "#ffffff",
+        "iconColor": "#ffffff",
+        "x": 150,
+        "y": 1220,
+        "wires": [
+            [
+                "60875c130bd0ba85"
+            ]
+        ]
+    },
+    {
+        "id": "7b56154c112377ef",
+        "type": "ui-button",
+        "z": "d5f84fe3c1ba01d0",
+        "group": "grp_controls",
+        "name": "Tout arrêter",
+        "label": "🛑 Tout arrêter",
+        "order": 7,
+        "width": 6,
+        "height": 1,
+        "emulateClick": false,
+        "tooltip": "Arrêt manuel de la lampe et du buzzer.",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "iconPosition": "left",
+        "payload": "all_off",
+        "payloadType": "str",
+        "topic": "",
+        "topicType": "str",
+        "buttonColor": "#b91c1c",
+        "textColor": "#ffffff",
+        "iconColor": "#ffffff",
+        "x": 150,
+        "y": 1280,
+        "wires": [
+            [
+                "60875c130bd0ba85"
+            ]
+        ]
+    },
+    {
+        "id": "60875c130bd0ba85",
+        "type": "function",
+        "z": "d5f84fe3c1ba01d0",
+        "name": "Manual command (full state)",
+        "func": "// Envoie toujours l'état COMPLET lampe/buzzer/fréquence à l'Arduino.\nconst cmd = String(msg.payload);\nlet lamp = Number(flow.get('lampState') || 0);\nlet buzzer = Number(flow.get('buzzerState') || 0);\nlet freq = Number(flow.get('freq') || 600);\n\nswitch (cmd) {\n    case 'lamp_on':    lamp = 1; flow.set('manualLampOverride', true); break;\n    case 'lamp_off':   lamp = 0; flow.set('manualLampOverride', false); break;\n    case 'buzzer_on':  buzzer = 1; freq = 1200; flow.set('manualBuzzerOverride', true); break;\n    case 'buzzer_off': buzzer = 0; flow.set('manualBuzzerOverride', false); break;\n    case 'all_off':\n        lamp = 0; buzzer = 0; freq = 600;\n        flow.set('manualLampOverride', null);\n        flow.set('manualBuzzerOverride', null);\n        break;\n    default: return null;\n}\nflow.set('lampState', lamp);\nflow.set('buzzerState', buzzer);\nflow.set('freq', freq);\n\nreturn [\n    { payload: 'lamp=' + lamp + ';buzzer=' + buzzer + ';frequency=' + freq },\n    { payload: '💡 Lampe ' + (lamp ? 'ON' : 'OFF') + ' · 🔊 Buzzer ' + (buzzer ? 'ON' : 'OFF') }\n];",
+        "outputs": 2,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 420,
+        "y": 1140,
+        "wires": [
+            [
+                "4469657a9d4f63c6"
+            ],
+            [
+                "938a4f5c920eebb1"
+            ]
+        ]
+    },
+    {
+        "id": "4469657a9d4f63c6",
+        "type": "mqtt out",
+        "z": "d5f84fe3c1ba01d0",
+        "name": "Publish health/command",
+        "topic": "health/command",
+        "qos": "0",
+        "retain": "false",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "f7d09da4ba95a012",
+        "x": 710,
+        "y": 1060,
+        "wires": []
+    },
+    {
+        "id": "7a6f48dbd44dc2d8",
+        "type": "inject",
+        "z": "d5f84fe3c1ba01d0",
+        "name": "Initial actuators",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "0.5",
+        "topic": "",
+        "payload": "💡 Lampe OFF · 🔇 Buzzer OFF",
+        "payloadType": "str",
+        "x": 460,
+        "y": 1200,
+        "wires": [
+            [
+                "938a4f5c920eebb1"
+            ]
+        ]
+    },
+    {
+        "id": "938a4f5c920eebb1",
+        "type": "ui-text",
+        "z": "d5f84fe3c1ba01d0",
+        "group": "grp_controls",
+        "order": 8,
+        "width": 6,
+        "height": 1,
+        "name": "Actuators state",
+        "label": " Actionneurs",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "",
+        "wrapText": true,
+        "className": "",
+        "x": 990,
+        "y": 1170,
+        "wires": []
+    },
+    {
+        "id": "83cd0daef5ef7a4a",
+        "type": "ui-template",
+        "z": "d5f84fe3c1ba01d0",
+        "group": "bbe87d1c7efbc98f",
+        "page": "",
+        "ui": "",
+        "name": "Dashboard title + doctor",
+        "order": 1,
+        "width": 12,
+        "height": 3,
+        "head": "",
+        "format": "<template>\n  <div class=\"hm-banner\">\n    <div class=\"hm-text\">\n      <div class=\"hm-title\">💙 CardioTrack — Votre cœur sous bonne garde</div>\n      <div class=\"hm-sub\">Suivi ECG en temps réel · Badge RFID · Arduino UNO R4 WiFi</div>\n      <svg class=\"hm-ecg\" viewBox=\"0 0 400 40\" preserveAspectRatio=\"none\">\n        <path d=\"M0 20 H90 L100 20 L108 6 L116 34 L124 12 L130 20 H210 L220 20 L228 6 L236 34 L244 12 L250 20 H330 L340 20 L348 6 L356 34 L364 12 L370 20 H400\" />\n      </svg>\n      <div class=\"hm-clock\">🕒 {{ now }}</div>\n    </div>\n\n    <!-- Illustration originale d'un médecin (SVG, aucune image externe) -->\n    <svg class=\"hm-doctor\" viewBox=\"0 0 160 160\" aria-label=\"Médecin\">\n      <circle cx=\"80\" cy=\"80\" r=\"78\" fill=\"#e0f2fe\"/>\n      <!-- blouse -->\n      <path d=\"M30 160 C30 118 50 104 80 104 C110 104 130 118 130 160 Z\" fill=\"#ffffff\" stroke=\"#cbd5e1\" stroke-width=\"2\"/>\n      <!-- tenue sous la blouse -->\n      <path d=\"M66 104 L80 132 L94 104 Z\" fill=\"#0ea5e9\"/>\n      <!-- revers de la blouse -->\n      <path d=\"M66 104 L80 132 L70 160 L56 160 Z\" fill=\"#f1f5f9\"/>\n      <path d=\"M94 104 L80 132 L90 160 L104 160 Z\" fill=\"#f1f5f9\"/>\n      <!-- cou -->\n      <rect x=\"72\" y=\"88\" width=\"16\" height=\"18\" rx=\"6\" fill=\"#f2c9a0\"/>\n      <!-- tête -->\n      <circle cx=\"80\" cy=\"66\" r=\"26\" fill=\"#f6d2ae\"/>\n      <!-- cheveux -->\n      <path d=\"M54 62 C54 40 70 34 82 36 C98 36 108 46 106 62 C100 52 90 48 78 50 C68 50 60 56 54 62 Z\" fill=\"#3f2d20\"/>\n      <!-- yeux + sourire -->\n      <circle cx=\"71\" cy=\"68\" r=\"2.6\" fill=\"#1e293b\"/>\n      <circle cx=\"89\" cy=\"68\" r=\"2.6\" fill=\"#1e293b\"/>\n      <path d=\"M72 78 Q80 85 88 78\" stroke=\"#1e293b\" stroke-width=\"2.4\" fill=\"none\" stroke-linecap=\"round\"/>\n      <!-- stéthoscope -->\n      <path d=\"M62 106 C58 124 64 136 76 138\" stroke=\"#334155\" stroke-width=\"3.5\" fill=\"none\" stroke-linecap=\"round\"/>\n      <path d=\"M98 106 C102 124 96 136 84 138\" stroke=\"#334155\" stroke-width=\"3.5\" fill=\"none\" stroke-linecap=\"round\"/>\n      <circle cx=\"80\" cy=\"140\" r=\"6\" fill=\"#94a3b8\" stroke=\"#334155\" stroke-width=\"2.5\"/>\n      <!-- badge croix -->\n      <rect x=\"104\" y=\"122\" width=\"16\" height=\"16\" rx=\"3\" fill=\"#ffffff\" stroke=\"#ef4444\" stroke-width=\"2\"/>\n      <path d=\"M112 125 V135 M107 130 H117\" stroke=\"#ef4444\" stroke-width=\"3\" stroke-linecap=\"round\"/>\n    </svg>\n  </div>\n</template>\n\n<script>\nexport default {\n  data() { return { now: '', timer: null }; },\n  mounted() {\n    const tick = () => {\n      this.now = new Date().toLocaleString('fr-FR', { timeZone: 'Europe/Paris' });\n    };\n    tick();\n    this.timer = setInterval(tick, 1000);\n  },\n  unmounted() { clearInterval(this.timer); }\n};\n</script>\n\n<style>\n.hm-banner {\n  box-sizing: border-box; min-height: 140px;\n  display: flex; align-items: center; justify-content: space-between; gap: 16px;\n  padding: 18px 24px; border-radius: 12px; color: #ffffff;\n  background: linear-gradient(120deg, #0369a1 0%, #0ea5e9 55%, #22d3ee 100%);\n  box-shadow: 0 6px 18px rgba(14, 165, 233, 0.25);\n}\n.hm-text { flex: 1; min-width: 0; }\n.hm-title { font-size: clamp(20px, 3vw, 30px); font-weight: 700; line-height: 1.2; }\n.hm-sub { font-size: 14px; opacity: 0.9; margin-top: 4px; }\n.hm-clock { font-size: 13px; opacity: 0.9; margin-top: 6px; }\n.hm-ecg { width: 100%; max-width: 420px; height: 34px; margin-top: 8px; display: block; }\n.hm-ecg path {\n  fill: none; stroke: #ffffff; stroke-width: 2.5; stroke-linejoin: round;\n  stroke-dasharray: 600; stroke-dashoffset: 600;\n  animation: hm-draw 3s linear infinite;\n}\n@keyframes hm-draw { to { stroke-dashoffset: 0; } }\n.hm-doctor { width: 110px; height: 110px; flex-shrink: 0;\n  filter: drop-shadow(0 4px 10px rgba(0,0,0,0.2)); }\n@media (max-width: 576px) {\n  .hm-banner { padding: 14px; }\n  .hm-doctor { width: 80px; height: 80px; }\n}\n</style>",
+        "storeOutMessages": true,
+        "passthru": false,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 650,
+        "y": 20,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "455bf806997a7322",
+        "type": "mqtt in",
+        "z": "d5f84fe3c1ba01d0",
+        "name": "Patient — RFID",
+        "topic": "health/rfid",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "f7d09da4ba95a012",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 140,
+        "y": 1360,
+        "wires": [
+            [
+                "2924334f1d05b016"
+            ]
+        ]
+    },
+    {
+        "id": "8c862ecf7ac29e88",
+        "type": "mqtt in",
+        "z": "d5f84fe3c1ba01d0",
+        "name": "Patient — bouton",
+        "topic": "health/button",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "f7d09da4ba95a012",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 140,
+        "y": 1410,
+        "wires": [
+            [
+                "2924334f1d05b016"
+            ]
+        ]
+    },
+    {
+        "id": "0565c903450a7189",
+        "type": "mqtt in",
+        "z": "d5f84fe3c1ba01d0",
+        "name": "Patient — statut",
+        "topic": "health/status",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "f7d09da4ba95a012",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 140,
+        "y": 1460,
+        "wires": [
+            [
+                "2924334f1d05b016"
+            ]
+        ]
+    },
+    {
+        "id": "2924334f1d05b016",
+        "type": "function",
+        "z": "d5f84fe3c1ba01d0",
+        "name": "Patient card state",
+        "func": "// Carte patient : badge RFID + état de la session\n// Se resynchronise aussi avec le heartbeat de l'Arduino (toutes les 2 s).\nconst t = String(msg.topic || '');\nconst p = String(msg.payload ?? '').trim();\nconst vide = { uid: null, time: '', status: '' };\nlet s = context.get('patient') || { ...vide };\nconst now = new Date().toLocaleTimeString('fr-FR', { timeZone: 'Europe/Paris' });\nconst avant = JSON.stringify(s);\n\nif (t === 'health/rfid') {\n    if (!p) return null;\n    s = { uid: p, time: now, status: 'identifie' };\n    flow.set('patientUID', p);\n} else if (t === 'health/button') {\n    const b = p.toLowerCase();\n    if (b === 'start' && s.uid) s.status = 'acquisition';\n    else if (b === 'stop') { s = { ...vide }; flow.set('patientUID', null); }\n    else return null;\n} else if (t === 'health/status') {\n    const st = p.toLowerCase();\n    const uid = s.uid || String(flow.get('patientUID') || '').replace('🪪', '').trim() || null;\n    if (st === 'attente badge') s = { ...vide };\n    else if (st === 'patient identifie' && uid) s = { uid, time: s.time || now, status: 'identifie' };\n    else if (st === 'acquisition en cours' && uid) s = { uid, time: s.time || now, status: 'acquisition' };\n    else return null;\n} else {\n    return null;\n}\n\ncontext.set('patient', s);\nif (JSON.stringify(s) === avant) return null;   // rien n'a changé\nreturn { payload: s };",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 380,
+        "y": 1410,
+        "wires": [
+            [
+                "7786e6b71b726c88"
+            ]
+        ]
+    },
+    {
+        "id": "7786e6b71b726c88",
+        "type": "ui-template",
+        "z": "d5f84fe3c1ba01d0",
+        "group": "a1e176f865485efe",
+        "page": "",
+        "ui": "",
+        "name": "Patient card (icon + RFID)",
+        "order": 1,
+        "width": 6,
+        "height": 6,
+        "head": "",
+        "format": "<template>\n  <div class=\"pt-card\">\n    <!-- Icône patient originale (SVG) -->\n    <svg class=\"pt-icon\" viewBox=\"0 0 120 120\" aria-label=\"Patient\">\n      <circle cx=\"60\" cy=\"60\" r=\"58\" fill=\"#ecfdf5\"/>\n      <path d=\"M22 118 C22 90 38 78 60 78 C82 78 98 90 98 118 Z\" fill=\"#7dd3fc\"/>\n      <path d=\"M22 118 C22 90 38 78 60 78 C82 78 98 90 98 118 Z\" fill=\"url(#pt-dots)\"/>\n      <rect x=\"53\" y=\"66\" width=\"14\" height=\"14\" rx=\"5\" fill=\"#f2c9a0\"/>\n      <circle cx=\"60\" cy=\"50\" r=\"20\" fill=\"#f6d2ae\"/>\n      <path d=\"M40 48 C40 32 52 27 62 28 C74 29 81 37 80 48 C75 40 67 37 58 38 C50 38 44 42 40 48 Z\" fill=\"#6b4a32\"/>\n      <circle cx=\"53\" cy=\"52\" r=\"2.2\" fill=\"#1e293b\"/>\n      <circle cx=\"67\" cy=\"52\" r=\"2.2\" fill=\"#1e293b\"/>\n      <path d=\"M54 60 Q60 65 66 60\" stroke=\"#1e293b\" stroke-width=\"2\" fill=\"none\" stroke-linecap=\"round\"/>\n      <!-- bracelet d'identification -->\n      <rect x=\"70\" y=\"96\" width=\"26\" height=\"16\" rx=\"4\" fill=\"#ffffff\" stroke=\"#0ea5e9\" stroke-width=\"2\"/>\n      <path d=\"M75 101 H91 M75 106 H86\" stroke=\"#0ea5e9\" stroke-width=\"2\" stroke-linecap=\"round\"/>\n      <defs>\n        <pattern id=\"pt-dots\" width=\"10\" height=\"10\" patternUnits=\"userSpaceOnUse\">\n          <circle cx=\"5\" cy=\"5\" r=\"1.4\" fill=\"#ffffff\" opacity=\"0.7\"/>\n        </pattern>\n      </defs>\n    </svg>\n\n    <div class=\"pt-label\">🧑‍⚕️ Patient</div>\n\n    <template v-if=\"p.uid\">\n      <div class=\"pt-uid\">🪪 {{ p.uid }}</div>\n      <div class=\"pt-meta\">Identifié à {{ p.time }}</div>\n      <div :class=\"['pt-badge', p.status]\">\n        {{ p.status === 'acquisition' ? '▶️ Acquisition en cours' : '✅ Identifié — appuyez sur le bouton' }}\n      </div>\n    </template>\n    <template v-else>\n      <div class=\"pt-uid pt-empty\">— Aucun patient —</div>\n      <div class=\"pt-meta\">Passez un badge RFID pour commencer</div>\n    </template>\n  </div>\n</template>\n\n<script>\nexport default {\n  computed: {\n    p() {\n      return (this.msg && this.msg.payload && typeof this.msg.payload === 'object')\n        ? this.msg.payload\n        : { uid: null };\n    }\n  }\n};\n</script>\n\n<style>\n.pt-card {\n  display: flex; flex-direction: column; align-items: center; justify-content: center;\n  gap: 8px; height: 100%; padding: 8px; text-align: center;\n}\n.pt-icon { width: 130px; height: 130px; filter: drop-shadow(0 4px 10px rgba(0,0,0,0.12)); }\n.pt-label { font-size: 16px; color: #475569; font-weight: 600; }\n.pt-uid {\n  font-family: ui-monospace, Consolas, monospace; font-size: 24px; font-weight: 700;\n  color: #0f172a; background: #f1f5f9; border: 1px solid #dbe4ee;\n  border-radius: 10px; padding: 6px 16px; letter-spacing: 1px;\n}\n.pt-empty { font-family: inherit; font-size: 18px; color: #94a3b8; letter-spacing: 0; }\n.pt-meta { font-size: 13px; color: #64748b; }\n.pt-badge { font-size: 14px; font-weight: 600; padding: 4px 12px; border-radius: 999px; }\n.pt-badge.identifie { background: #dcfce7; color: #166534; }\n.pt-badge.acquisition { background: #e0f2fe; color: #075985; }\n</style>",
+        "storeOutMessages": true,
+        "passthru": false,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 620,
+        "y": 1410,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "f7d09da4ba95a012",
+        "type": "mqtt-broker",
+        "name": "",
+        "broker": "broker.emqx.io",
+        "port": 1883,
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "grp_ecg",
+        "type": "ui-group",
+        "name": "Live ECG",
+        "page": "ui_page",
+        "width": 12,
+        "height": "1",
+        "order": 8,
+        "showTitle": true,
+        "visible": true,
+        "disabled": false
+    },
+    {
+        "id": "grp_vitals",
+        "type": "ui-group",
+        "name": "Vital Signs",
+        "page": "ui_page",
+        "width": 6,
+        "height": "1",
+        "order": 6,
+        "showTitle": true,
+        "visible": true,
+        "disabled": false
+    },
+    {
+        "id": "grp_events",
+        "type": "ui-group",
+        "name": "Events & Connectivity",
+        "page": "ui_page",
+        "width": 6,
+        "height": "1",
+        "order": 9,
+        "showTitle": true,
+        "visible": true,
+        "disabled": false
+    },
+    {
+        "id": "grp_controls",
+        "type": "ui-group",
+        "name": "Remote Controls",
+        "page": "ui_page",
+        "width": 6,
+        "height": "1",
+        "order": 10,
+        "showTitle": true,
+        "visible": true,
+        "disabled": false
+    },
+    {
+        "id": "bbe87d1c7efbc98f",
+        "type": "ui-group",
+        "name": "Header",
+        "page": "ui_page",
+        "width": 12,
+        "height": 1,
+        "order": 2,
+        "showTitle": false,
+        "className": "",
+        "visible": true,
+        "disabled": false,
+        "groupType": "default"
+    },
+    {
+        "id": "a1e176f865485efe",
+        "type": "ui-group",
+        "name": "Patient",
+        "page": "ui_page",
+        "width": 6,
+        "height": 1,
+        "order": 4,
+        "showTitle": true,
+        "className": "",
+        "visible": true,
+        "disabled": false,
+        "groupType": "default"
+    },
+    {
+        "id": "ui_page",
+        "type": "ui-page",
+        "name": "Live Monitor",
+        "ui": "1dcf1872dae2e054",
+        "path": "/live",
+        "icon": "dashboard",
+        "layout": "grid",
+        "theme": "ui_theme",
+        "breakpoints": [
+            {
+                "name": "Default",
+                "px": "0",
+                "cols": "3"
+            },
+            {
+                "name": "Tablet",
+                "px": "576",
+                "cols": "6"
+            },
+            {
+                "name": "Laptop",
+                "px": "768",
+                "cols": "9"
+            },
+            {
+                "name": "Desktop",
+                "px": "1024",
+                "cols": "12"
+            }
+        ],
+        "order": 2,
+        "visible": true,
+        "disabled": false
+    },
+    {
+        "id": "1dcf1872dae2e054",
+        "type": "ui-base",
+        "name": "My Dashboard",
+        "path": "/dashboard",
+        "appIcon": "",
+        "includeClientData": true,
+        "acceptsClientConfig": [
+            "ui-notification",
+            "ui-control"
+        ],
+        "showPathInSidebar": false,
+        "headerContent": "page",
+        "navigationStyle": "default",
+        "titleBarStyle": "default",
+        "showReconnectNotification": true,
+        "notificationDisplayTime": 1,
+        "showDisconnectNotification": true,
+        "allowInstall": false
+    },
+    {
+        "id": "ui_theme",
+        "type": "ui-theme",
+        "name": "Health Theme",
+        "colors": {
+            "surface": "#ffffff",
+            "primary": "#0ea5e9",
+            "bgPage": "#eef4f8",
+            "groupBg": "#ffffff",
+            "groupOutline": "#dbe4ee"
+        },
+        "sizes": {
+            "pagePadding": "16px",
+            "groupGap": "16px",
+            "groupBorderRadius": "12px",
+            "widgetGap": "12px"
+        }
+    },
+    {
+        "id": "a227737db7c35f6d",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "@flowfuse/node-red-dashboard": "1.32.0"
+        }
+    }
+]
